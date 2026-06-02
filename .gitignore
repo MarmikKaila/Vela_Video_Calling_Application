@@ -1,0 +1,14 @@
+build/
+build-*/
+out/
+cmake-build-*/
+.cache/
+compile_commands.json
+vcpkg_installed/
+*.o
+*.obj
+*.yuv
+*.h264
+.DS_Store
+.idea/
+.vscode/
