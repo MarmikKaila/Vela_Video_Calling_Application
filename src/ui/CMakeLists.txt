@@ -37,6 +37,16 @@ target_link_libraries(ui_demo
     vc_common
 )
 
+# ---- loopback_call: live camera through the full encode/RTP/jitter/decode path
+# Needs the capture + media (+ codec/network) modules too. Built only when those
+# targets exist, so a UI-only build still works.
+if(TARGET vc_capture AND TARGET vc_media)
+  add_executable(loopback_call loopback_call.cpp)
+  target_link_libraries(loopback_call PRIVATE
+    vc_ui vc_media vc_capture vc_codec vc_network vc_common
+    Qt6::Widgets Qt6::OpenGLWidgets)
+endif()
+
 # ---- Optional CPU-side test for the YUV->RGB shader math --------------------
 if(VC_BUILD_TESTS)
   find_package(GTest QUIET)
