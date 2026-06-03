@@ -77,21 +77,50 @@ export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$(brew --prefix srtp)/lib
 cmake -S . -B build \
   -DVC_BUILD_CAPTURE=ON -DVC_BUILD_CODEC=ON -DVC_BUILD_NETWORK=ON \
   -DVC_BUILD_SIGNALING=ON -DVC_BUILD_UI=ON -DVC_BUILD_SFU=ON \
-  -DVC_BUILD_MEDIA=ON -DVC_BUILD_METRICS=ON -DVC_BUILD_BENCH=ON -DVC_BUILD_TESTS=ON
+  -DVC_BUILD_MEDIA=ON -DVC_BUILD_AUDIO=ON -DVC_BUILD_METRICS=ON \
+  -DVC_BUILD_BENCH=ON -DVC_BUILD_TESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
 Every module is behind a `VC_BUILD_<MODULE>` flag (all default OFF except tests),
 so you can build any subset. Demos: `build/src/ui/ui_demo`,
-`build/src/ui/loopback_call`, `build/signaling-server/signaling_server`,
-`build/bench/sfu_benchmark`, `build/src/capture/capture_dump`.
+`build/src/ui/loopback_call`, `build/src/ui/group_call`,
+`build/sfu-server/sfu_server`, `build/src/audio/audio_loopback`,
+`build/signaling-server/signaling_server`, `build/bench/sfu_benchmark`,
+`build/src/capture/capture_dump`.
 
 `loopback_call` is the closest thing to a real call on one machine: your live
 camera rendered raw on the left, and the *same* feed after a full
 encode → RTP → JitterBuffer → decode round trip on the right — the gap between
 the two tiles is the pipeline's glass-to-glass latency. On macOS, grant your
 terminal Camera permission (System Settings → Privacy & Security → Camera).
+
+## Run a real call (two laptops, same Wi-Fi)
+
+`group_call` is an actual multi-party meeting: each client opens one ICE channel
+to an `sfu_server`, sends its camera + microphone up it, and receives every other
+participant's audio/video back down it (the SFU forwards encoded RTP verbatim,
+demuxed by SSRC into one tile per remote video).
+
+```sh
+# Laptop A — run the hub, then join:
+scripts/run_call.sh server                 # prints the LAN IP to dial
+scripts/run_call.sh client <A-ip> demo
+
+# Laptop B — join the same room:
+scripts/run_call.sh client <A-ip> demo
+```
+
+Grant the terminal **Camera and Microphone** permission on both machines (System
+Settings → Privacy & Security). **Use headphones** — there is no echo
+cancellation. A third laptop can join `demo` and a tile appears within ~2 s (the
+next GOP keyframe). Audio is 48 kHz Opus; video is H.264. Currently LAN-only
+(ICE host candidates, no STUN); a newcomer relies on the encoder's 2 s keyframe
+interval rather than an explicit PLI.
+
+To verify the network path without cameras: `build/src/audio/audio_loopback`
+(hear yourself) and the `sfu_smoketest` / `test_rtp_transport` unit tests.
 
 ## Layout
 
@@ -102,9 +131,16 @@ terminal Camera permission (System Settings → Privacy & Security → Camera).
 | `src/codec`         | 2     | H.264 (FFmpeg) + Opus encode/decode             |
 | `src/network`       | 3     | RTP, JitterBuffer, signaling client, STUN/ICE   |
 | `src/sfu`           | 5     | SFU server, Room, Participant, REMB/ABR         |
-| `src/media`         | 4     | MediaPipeline wiring + AVSync                   |
-| `src/ui`            | 6     | Qt6 client (OpenGL video grid)                  |
+| `src/media`         | 4     | MediaPipeline, AVSync, ReceiveRouter (SSRC demux)|
+| `src/audio`         | 8     | Mic capture + speaker playback (AVAudioEngine)  |
+| `src/ui`            | 6     | Qt6 client (OpenGL grid), `group_call`          |
 | `src/metrics`       | 7     | spdlog logging + latency/loss/CPU metrics       |
-| `signaling-server`  | 3     | Standalone uWebSockets signaling server         |
+| `signaling-server`  | 3     | Standalone uWebSockets relay server             |
+| `sfu-server`        | 8     | Integrated signaling + SFU media hub (`sfu_server`)|
 | `bench`             | 7     | `sfu_benchmark` (forwarding throughput)         |
 | `docs`              | 7     | Architecture documentation                      |
+
+`RtpTransport` (in `src/signaling`) bridges the ICE channel and `RtpPacket`:
+`send(RtpPacket)` serializes to the wire, inbound bytes parse back to packets.
+It is the seam that turns the single-machine `loopback_call` into the real,
+networked `group_call`.
