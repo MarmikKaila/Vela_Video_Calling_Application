@@ -76,6 +76,12 @@ std::vector<CaptureDeviceInfo> macEnumerateCaptureDevices() {
     std::shared_ptr<vc::FramePool> _pool;
     vc::CaptureDevice::FrameCallback _cb;
     std::mutex _cbMu; // guards _cb so stop() can clear it safely
+    // RTP-timestamp epoch: the capture instant of the first delivered frame.
+    // Subsequent frames' 90 kHz RTP timestamps are measured relative to it so
+    // they advance monotonically (the jitter buffer keys frames by timestamp).
+    // Frames arrive on a serial delivery queue, so no extra locking is needed.
+    vc::SteadyTime _rtpEpoch;
+    bool _haveRtpEpoch;
 }
 
 - (void)captureOutput:(AVCaptureOutput*)output
@@ -103,9 +109,20 @@ std::vector<CaptureDeviceInfo> macEnumerateCaptureDevices() {
     auto buf = pool->acquire();
     if (!buf) return; // back-pressure: pool exhausted, drop this frame
 
-    vc::VideoFrame frame =
-        vc::VideoFrame::makeI420(buf, w, h, vc::MediaClock::now());
+    const vc::SteadyTime captured = vc::MediaClock::now();
+    vc::VideoFrame frame = vc::VideoFrame::makeI420(buf, w, h, captured);
     if (!frame.valid()) return;
+
+    // Assign the 90 kHz RTP timestamp at capture (the contract in VideoFrame.h),
+    // measured from the first frame's instant. Without this every frame would
+    // carry timestamp 0 and the receiver's jitter buffer would collapse them all
+    // into one access unit, then reject the rest as "late".
+    if (!_haveRtpEpoch) {
+        _rtpEpoch = captured;
+        _haveRtpEpoch = true;
+    }
+    frame.rtpTimestamp = vc::MediaClock::toRtp(captured, _rtpEpoch, vc::kVideoRtpClockHz);
+
     uint8_t* dst = frame.planes[0].data;
 
     CVPixelBufferLockBaseAddress(img, kCVPixelBufferLock_ReadOnly);
@@ -266,6 +283,7 @@ Status MacCapture::start(FrameCallback onFrame) {
         impl_->delegate = [[VCCaptureDelegate alloc] init];
         impl_->delegate->_pool = impl_->pool;
         impl_->delegate->_cb = std::move(onFrame);
+        impl_->delegate->_haveRtpEpoch = false; // fresh RTP timeline per session
 
         impl_->queue =
             dispatch_queue_create("vc.capture.delivery", DISPATCH_QUEUE_SERIAL);

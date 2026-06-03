@@ -1,5 +1,6 @@
 #include "ui/VideoWidget.h"
 
+#include <QDebug>
 #include <QOpenGLShaderProgram>
 #include <QPainter>
 #include <algorithm>
@@ -104,7 +105,15 @@ void VideoWidget::initializeGL() {
     program_ = std::make_unique<QOpenGLShaderProgram>();
     program_->addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader);
     program_->addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShader);
-    program_->link();
+    if (!program_->link()) {
+        // A link failure here almost always means the GL context is not a 3.3
+        // core profile (the GLSL 330 shaders won't compile), which renders the
+        // tile blank. Surface the reason instead of silently showing white, and
+        // drop the program so paintGL() skips the draw.
+        qWarning() << "[VideoWidget] shader link failed (need an OpenGL 3.3 "
+                      "core-profile surface):" << program_->log();
+        program_.reset();
+    }
 
     program_->bind();
     program_->setUniformValue("yTex", 0);

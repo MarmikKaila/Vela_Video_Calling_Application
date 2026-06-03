@@ -16,6 +16,7 @@
 // the decoder only on the GUI thread.
 
 #include <QApplication>
+#include <QSurfaceFormat>
 #include <QTimer>
 
 #include <atomic>
@@ -33,6 +34,17 @@
 using namespace vc;
 
 int main(int argc, char** argv) {
+    // The YUV->RGB shader is GLSL 330 core, so request a 3.3 core-profile
+    // surface for every QOpenGLWidget before the application is created.
+    // Without this, macOS hands out a legacy 2.1 context, the shader fails to
+    // link, and the video tiles render blank/white.
+    QSurfaceFormat glFmt;
+    glFmt.setProfile(QSurfaceFormat::CoreProfile);
+    glFmt.setVersion(3, 3);
+    glFmt.setDepthBufferSize(0);
+    glFmt.setStencilBufferSize(0);
+    QSurfaceFormat::setDefaultFormat(glFmt);
+
     QApplication app(argc, argv);
 
     ui::MainWindow win;
