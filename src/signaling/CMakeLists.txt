@@ -15,7 +15,8 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(vc_signaling STATIC
   SignalingClient.cpp
-  NATTraversal.cpp)
+  NATTraversal.cpp
+  RtpTransport.cpp)
 target_include_directories(vc_signaling PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vc_signaling
   PUBLIC vc_common
@@ -41,4 +42,13 @@ if(VC_BUILD_TESTS)
             GTest::gtest_main)
 
   add_test(NAME test_signaling COMMAND test_signaling)
+
+  # RtpTransport round trip: two ICE agents on loopback, no STUN, no server.
+  add_executable(test_rtp_transport test_rtp_transport.cpp)
+  target_link_libraries(test_rtp_transport
+    PRIVATE vc_signaling
+            vc_common
+            GTest::gtest
+            GTest::gtest_main)
+  add_test(NAME test_rtp_transport COMMAND test_rtp_transport)
 endif()
