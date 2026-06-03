@@ -47,6 +47,15 @@ if(TARGET vc_capture AND TARGET vc_media)
     Qt6::Widgets Qt6::OpenGLWidgets)
 endif()
 
+# ---- group_call: real cross-laptop call via the SFU --------------------------
+# Needs media + capture + audio + signaling (RtpTransport/SignalingClient).
+if(TARGET vc_capture AND TARGET vc_media AND TARGET vc_signaling AND TARGET vc_audio)
+  add_executable(group_call group_call.cpp)
+  target_link_libraries(group_call PRIVATE
+    vc_ui vc_media vc_capture vc_codec vc_network vc_audio vc_signaling vc_common
+    Qt6::Widgets Qt6::OpenGLWidgets)
+endif()
+
 # ---- Optional CPU-side test for the YUV->RGB shader math --------------------
 if(VC_BUILD_TESTS)
   find_package(GTest QUIET)

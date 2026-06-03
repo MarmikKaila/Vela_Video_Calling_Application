@@ -7,6 +7,7 @@ endif()
 add_library(vc_media STATIC
   MediaPipeline.cpp
   AVSync.cpp
+  ReceiveRouter.cpp
 )
 target_link_libraries(vc_media
   PUBLIC vc_common vc_codec vc_network vc_capture)
