@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Video Call</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: -apple-system, system-ui, sans-serif;
+      background: #0d0d12; color: #eee; height: 100vh; display: flex; flex-direction: column;
+    }
+    #bar { padding: 10px 14px; display: flex; gap: 10px; align-items: center; background: #16161d; }
+    #bar input { background: #23232d; color: #eee; border: 1px solid #333; border-radius: 6px; padding: 6px 10px; }
+    #bar button {
+      background: #2d6cdf; color: #fff; border: 0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-weight: 600;
+    }
+    #bar button.off { background: #444; }
+    #bar button:disabled { opacity: .5; cursor: default; }
+    #status { margin-left: auto; font-size: 13px; color: #9aa; }
+    #grid {
+      flex: 1; display: grid; gap: 8px; padding: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-content: start;
+    }
+    .tile { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 16/9; }
+    .tile video { width: 100%; height: 100%; object-fit: cover; background: #000; }
+    .tile .label {
+      position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; font-size: 12px;
+      background: rgba(0,0,0,.55); border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <strong>Room:</strong> <span id="roomName">—</span>
+    <button id="joinBtn">Join</button>
+    <button id="micBtn" class="off" disabled>Mic</button>
+    <button id="camBtn" class="off" disabled>Camera</button>
+    <span id="status">not joined</span>
+  </div>
+  <div id="grid"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "video-call-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser WebRTC mesh meeting (LAN) — click-a-link client for the video-call project",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

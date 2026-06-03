@@ -96,7 +96,17 @@ encode → RTP → JitterBuffer → decode round trip on the right — the gap b
 the two tiles is the pipeline's glass-to-glass latency. On macOS, grant your
 terminal Camera permission (System Settings → Privacy & Security → Camera).
 
-## Run a real call (two laptops, same Wi-Fi)
+## Easiest: browser meeting via an invite link (no install)
+
+Want the "send a link, click, you're in" experience with nothing to install on
+the other machine? See **[web/](web/)** — a zero-install browser client (WebRTC
+mesh) for laptops on the same Wi-Fi. The host runs `node server.js` and shares a
+`https://<lan-ip>:8443/?room=demo` link; everyone else just opens it in a browser
+and clicks Join. This uses the browser's built-in WebRTC (so it runs anywhere,
+Intel or Apple Silicon); the native `group_call` below is the from-scratch
+raw-RTP/SFU implementation.
+
+## Run a real call with the native app (two laptops, same Wi-Fi)
 
 `group_call` is an actual multi-party meeting: each client opens one ICE channel
 to an `sfu_server`, sends its camera + microphone up it, and receives every other
