@@ -6,28 +6,40 @@ the threading model, and the key design decisions.
 
 ## 1. System overview
 
+Each client opens **one ICE channel** (libjuice/UDP, via `RtpTransport`) to the
+SFU server, sends its own audio+video RTP up it, and receives every other
+participant's RTP back down it — demultiplexed by SSRC into one decode path and
+tile per remote sender.
+
 ```
    ┌─────────────────────────────── one client ───────────────────────────────┐
-   │                                                                            │
    │  Camera ─▶ CaptureDevice ─▶ VideoEncoder ─┐                                │
-   │  Mic    ─▶ (audio capture) ─▶ AudioEncoder ┤                               │
+   │  Mic    ─▶ AudioCapture   ─▶ AudioEncoder ─┤                               │
    │                                            ▼                               │
    │                                       RTPHandler ─▶ RtpPacket ─┐           │
    │                                                                ▼           │
-   │   VideoWidget ◀─ VideoDecoder ◀─ JitterBuffer ◀─ RtpPacket ◀── transport ──┼──▶ network
-   │       ▲                              ▲          (DTLS/SRTP)     ▲           │
-   │     AVSync ───────────────────────── (RTCP SR: RTP↔NTP) ────────┘          │
+   │   tiles ◀─ ReceiveRouter ◀── RtpPacket ◀──────────────── RtpTransport ─────┼──┐ ICE
+   │   speaker ◀─ (per-SSRC: JitterBuffer ─▶ Decoder)         RtpTransport ◀────┼──┘ /UDP
    └────────────────────────────────────────────────────────────────────────────┘
-                                          │
-                                          ▼
+                                          │  WebSocket signaling
+                                          ▼  (offer/answer + ICE candidates)
                        ┌──────────────────────────────────┐
-                       │   SFU (server, multi-party)       │
-                       │   receives encoded RTP from each  │
-                       │   participant, forwards to others │
-                       │   WITHOUT decoding (true SFU)      │
+                       │  sfu_server (multi-party)          │
+                       │  signaling + SFUServer +           │
+                       │  one RtpTransport per client.      │
+                       │  Forwards encoded RTP to others    │
+                       │  WITHOUT decoding (true SFU).       │
                        └──────────────────────────────────┘
-        Signaling (WebSocket): SDP offer/answer + ICE candidates, out of band.
 ```
+
+Single-machine variants exercise the same pipeline without a network:
+`loopback_call` (camera → encode → RTP → jitter → decode → render, in-process)
+and `audio_loopback` (mic → Opus → speaker). A separate **browser** client
+([web/](../web/)) offers a zero-install WebRTC-mesh call — see §11.
+
+> Transport note: the native transport is plain RTP over a libjuice ICE/UDP
+> channel. **DTLS-SRTP encryption is not implemented** — this is a trusted-LAN /
+> protocol-demonstration build, not a production-secure one.
 
 ## 2. Module dependency graph
 
@@ -39,22 +51,30 @@ Everything crosses module boundaries through the header-only **contracts** in
                          │ vc_common  │  Result/Status, VideoFrame, AudioFrame,
                          │ (contracts)│  EncodedFrame, FramePool, MediaClock, Types
                          └─────▲──────┘
-        ┌──────────┬──────────┼───────────┬───────────┬──────────┐
-        │          │          │           │           │          │
-   vc_capture  vc_codec   vc_network  vc_signaling  vc_ui    vc_metrics
-        │          │          │                                  │
-        └────┬─────┴────┬─────┘                                  │
-             ▼          ▼                                        │
-          vc_media    vc_sfu ──────────────────────────────▶ sfu_benchmark
-       (pipeline+AVSync) (forwarding+REMB)
+     ┌──────────┬──────────┬──┼────────┬────────────┬──────────┬──────────┐
+     │          │          │  │        │            │          │          │
+ vc_capture vc_codec  vc_network vc_signaling   vc_audio    vc_ui    vc_metrics
+     │          │          │     (RtpTransport)     │          │
+     └────┬─────┴────┬─────┘         │              │          │
+          ▼          ▼               │              │          │
+       vc_media ◀────┴───────────────┴──────────────┘          │
+   (pipeline, AVSync, ReceiveRouter)                            │
+          │                                                     ▼
+       vc_sfu ──▶ sfu_server (signaling+SFU+RtpTransport)   sfu_benchmark
+   (forwarding+REMB)   group_call (vc_ui+media+audio+signaling)
 ```
 
 - **vc_common** — no dependencies; pure value types and the error model.
-- **vc_capture / vc_codec / vc_network / vc_signaling / vc_ui** — independent;
-  each depends only on `vc_common` (+ its external lib: FFmpeg, Opus, libsrtp,
-  libjuice, uWebSockets, Qt6).
-- **vc_media** — wires capture+codec+network into an end-to-end path.
+- **vc_capture / vc_codec / vc_network / vc_audio / vc_ui** — independent; each
+  depends only on `vc_common` (+ its external lib: FFmpeg, Opus, AVFoundation,
+  Qt6).
+- **vc_signaling** — WebSocket signaling client, libjuice ICE (`NATTraversal`),
+  and **`RtpTransport`** (ICE ↔ `RtpPacket` bridge).
+- **vc_media** — wires capture+codec+network into the send/receive pipeline; adds
+  AVSync and **`ReceiveRouter`** (per-SSRC inbound demux).
 - **vc_sfu** — depends on `vc_network` for the `RtpPacket` wire type only.
+- **sfu_server** — signaling + `SFUServer` + one `RtpTransport` per client.
+- **group_call** — the real client (signaling + transport + capture + pipeline + UI).
 
 The top-level `CMakeLists.txt` discovers each module dir automatically and each
 module is behind a `VC_BUILD_<MODULE>` flag, so you can build any subset.
@@ -172,3 +192,51 @@ the real ceiling in production is the network and DTLS/SRTP crypto, not routing.
   `LinuxCapture` (V4L2), `WindowsCapture` (DirectShow) behind `CaptureDevice`.
 - **Contracts frozen first, modules built in parallel** — the `src/common`
   headers are the stable seam every module compiles against.
+
+## 11. The networked call (`group_call` + `sfu_server`)
+
+What turns the in-process `loopback_call` into a real cross-machine call:
+
+- **`RtpTransport`** (`src/signaling`) bridges the ICE channel and the RTP model:
+  `send(RtpPacket)` → `RtpPacket::serialize()` → `NATTraversal::send()`; inbound
+  bytes → `RtpPacket::parse()` → `onPacket`. One instance == one ICE connection.
+- **`sfu_server`** embeds the uWebSockets signaling server + `SFUServer` + one
+  `RtpTransport` per client. In SFU mode the server is the **ICE answerer**: it
+  handles each client's offer itself (rather than relaying it to a peer), then
+  `routePacket`s inbound RTP to the room's other members.
+- **`ReceiveRouter`** (`src/media`) demuxes the merged inbound stream by SSRC,
+  building a `JitterBuffer` + decoder per (sender, kind) — video vs audio by
+  payload type (96 = H.264, 111 = Opus). It reaps streams idle > 3 s (the SFU
+  sends no peer-left). `pushPacket` runs on the transport thread; `tick()` runs
+  on the GUI thread and is the only place decoders run and tiles are created.
+
+**Threading across the network seam.** uWebSockets is single-threaded, while
+libjuice fires `RtpTransport` callbacks on its own thread. So in `sfu_server`,
+any `ws->send` from a libjuice callback is marshaled onto the loop with
+`uWS::Loop::defer`; the high-rate `onPacket` path calls `routePacket` directly
+(the SFU/Rooms are mutex-guarded), keeping media off the loop thread.
+
+Verified end-to-end headlessly by `sfu_smoketest` (two clients connect ICE
+through a live server; one's RTP is forwarded to the other) and
+`test_rtp_transport` (byte-identical RTP over a loopback ICE pair).
+
+**MVP limits:** plain RTP over ICE (no DTLS-SRTP), LAN-only (no STUN/TURN),
+keyframe-on-join relies on the 2 s GOP rather than an explicit PLI, and audio/
+video play from independent jitter buffers (AVSync mapping not yet wired into
+playout).
+
+## 12. The browser client (`web/`)
+
+A separate, zero-install path so anyone can join with only a browser. It uses the
+**browser's built-in WebRTC** (capture, codecs, DTLS-SRTP, rendering) in a full
+**mesh** — each participant connects directly to every other (good for ~2–4 on a
+LAN; an SFU is the scale-up beyond that). `web/server.js` (Node) only (a) serves
+the page over **HTTPS** — required for camera/mic access off `localhost`, with a
+self-signed cert generated on first run — and (b) relays WebSocket signaling
+(`join` / `signal` / `peer-joined` / `peer-left`) between peers in a room. Glare
+is avoided by a simple rule: the newer participant always initiates the offer.
+
+This intentionally does **not** reuse the C++ SFU: browsers require WebRTC's
+DTLS-SRTP + SDP semantics, which the custom raw-RTP SFU does not implement. The
+two clients are independent demonstrations — the C++ stack for the protocol work,
+the web app for instant access.

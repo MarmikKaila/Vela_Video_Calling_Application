@@ -6,49 +6,87 @@ Low-latency, multi-party video calling in modern C++ (C++20), built on a
 **custom RTP/SFU stack** rather than libwebrtc — the protocol work is the point.
 
 - 1:1 and up to 8-party calls via a custom Selective Forwarding Unit (SFU)
-- Target glass-to-glass latency &lt; 150 ms
-- Adaptive bitrate driven by RTCP feedback (REMB)
+- Real cross-laptop calls: camera + mic over a custom **ICE/RTP transport**
+  (`RtpTransport` over libjuice), demuxed by SSRC into one tile per participant
+- Target glass-to-glass latency &lt; 150 ms; adaptive bitrate via RTCP REMB
+- H.264 (FFmpeg/x264) video, Opus audio; AVFoundation capture + playback on macOS
 - Cross-platform capture behind one interface (macOS / Linux / Windows)
-- H.264 (FFmpeg/x264) video, Opus audio
 
 See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for diagrams, the threading
 model, and design decisions.
 
+### Two ways to call
+
+| | Native app (`group_call` + `sfu_server`) | Browser app ([web/](web/)) |
+|---|---|---|
+| **What it is** | The from-scratch C++ RTP/SFU stack | Zero-install WebRTC mesh |
+| **Other machine needs** | Build the project (or a bundled `.app`) | Just a browser — open a link |
+| **Media** | Custom: AVFoundation + FFmpeg + libjuice ICE + custom RTP/SFU | Browser's built-in WebRTC |
+| **Best for** | Showing the protocol work; up to 8 parties via SFU | The easy "send a link, click to join" demo; ~2–4 on a LAN |
+
+The native stack is the engineering centerpiece; the browser app exists so anyone
+can join a call instantly without building anything.
+
 ## Status
 
-All modules implemented and tested together (**9/9 unit tests green** on macOS):
+All modules implemented and tested together (**10/10 unit tests green** on macOS):
 
-| Module | Phase | What it does | Verified by |
-|--------|-------|--------------|-------------|
-| `src/common`   | 0 | Frozen contracts (Result, frames, FramePool, clock) | `contracts_selfcheck` |
-| `src/capture`  | 1 | AVFoundation capture (+ V4L2/DShow stubs), `capture_dump` | live camera, `capture_tests` |
-| `src/codec`    | 2 | H.264 (FFmpeg) + Opus encode/decode | `codec_roundtrip` (PSNR) |
-| `src/network`  | 3 | RTP, FU-A, thread-safe JitterBuffer | `rtp_handler`, `jitter_buffer` |
-| `src/signaling`| 3 | uWebSockets server + client + libjuice STUN/ICE | `test_signaling` |
-| `src/media`    | 4 | Send/receive pipeline + AVSync | `media_tests` (end-to-end loopback) |
-| `src/sfu`      | 5 | True SFU forwarding + REMB ABR | `sfu_tests` |
-| `src/ui`       | 6 | Qt6 grid + OpenGL `VideoWidget` | `ui_yuv_test` (GL render needs a display) |
-| `src/metrics`  | 7 | spdlog logging + latency/loss/CPU metrics | `metrics_tests` |
-| `bench`        | 7 | `sfu_benchmark` — forwarding throughput, rooms/core | — |
+| Module | What it does | Verified by |
+|--------|--------------|-------------|
+| `src/common`   | Frozen contracts (Result, frames, FramePool, clock) | `contracts_selfcheck` |
+| `src/capture`  | AVFoundation capture (+ V4L2/DShow stubs), `capture_dump` | live camera, `capture_tests` |
+| `src/codec`    | H.264 (FFmpeg) + Opus encode/decode | `codec_roundtrip` (PSNR) |
+| `src/network`  | RTP, FU-A, thread-safe JitterBuffer | `rtp_handler`, `jitter_buffer` |
+| `src/signaling`| WS signaling client + libjuice ICE + `RtpTransport` | `test_signaling`, `test_rtp_transport` |
+| `src/audio`    | Mic capture + speaker playback (AVAudioEngine) | `audio_loopback` (hear yourself) |
+| `src/media`    | Send/receive pipeline, AVSync, `ReceiveRouter` (SSRC demux) | `media_tests` (end-to-end loopback) |
+| `src/sfu`      | True SFU forwarding + REMB ABR | `sfu_tests` |
+| `sfu-server`   | Integrated signaling + SFU media hub | `sfu_smoketest` (2 clients, RTP forwarded) |
+| `src/ui`       | Qt6 grid + OpenGL `VideoWidget`; `group_call` | `ui_yuv_test` (GL render needs a display) |
+| `src/metrics`  | spdlog logging + latency/loss/CPU metrics | `metrics_tests` |
+| `web/`         | Zero-install browser WebRTC mesh client | signaling relay verified headlessly |
 
 Benchmark (Apple M-series, single core): **~5,374 eight-party rooms/core** of
 encoded-RTP forwarding (see [docs/ARCHITECTURE.md §9](docs/ARCHITECTURE.md)).
 
-## Architecture (data flow)
+## Architecture (native stack)
+
+A real call: each client opens **one ICE channel** to the SFU server, sends its
+camera+mic up it, and receives every other participant's RTP back down it.
 
 ```
- Camera ─▶ CaptureDevice ─▶ VideoEncoder ─▶ RTPHandler ─▶┐
- Mic    ─▶ AudioCapture  ─▶ AudioEncoder ─▶ RTPHandler ─▶│ DTLS/SRTP ─▶ network
-                                                          │
-   ┌──────────────────────────────────────────────────── network ◀── SFU (forwards
-   ▼                                                                    encoded RTP,
- JitterBuffer ─▶ VideoDecoder ─▶ AVSync ─▶ VideoWidget (Qt/OpenGL)      never decodes)
+        ┌──────────────────── one client ─────────────────────┐
+  Cam ─▶ Capture ─▶ VideoEncoder ─┐                            │
+  Mic ─▶ AudioCap ─▶ AudioEncoder ┤                            │
+                                  ▼                            │
+                             RTPHandler ─▶ RtpPacket ─┐        │
+                                                      ▼        │
+                                              RtpTransport ────┼──┐ ICE
+   Tiles ◀─ ReceiveRouter ◀─ RtpPacket ◀──── RtpTransport ◀───┼──┘ (libjuice/UDP)
+   (1 per      │ (per-SSRC: JitterBuffer ─▶ Decoder)          │
+    sender)    └─ audio ─▶ speaker (AudioPlayback)            │
+        └─────────────────────────────────────────────────────┘
+                                  │  WebSocket signaling (offer/answer/ICE)
+                                  ▼
+                  ┌────────────────────────────────────┐
+                  │  sfu_server: signaling + SFUServer  │
+                  │  one RtpTransport per client;        │
+                  │  forwards encoded RTP, never decodes │
+                  └────────────────────────────────────┘
 ```
+
+`RtpTransport` (in `src/signaling`) is the seam that turns the single-machine
+pipeline into a networked one: `send(RtpPacket)` serializes to the wire and
+inbound bytes parse back to packets, all over a libjuice ICE/UDP channel.
+`ReceiveRouter` (in `src/media`) demultiplexes the merged inbound stream by SSRC
+(payload type 96 = H.264, 111 = Opus) into a per-sender JitterBuffer + decoder.
 
 Everything crosses module boundaries through the header-only contracts in
 `src/common`: `Result<T,E>`/`Status` (no exceptions in hot paths), `VideoFrame`
 / `AudioFrame` / `EncodedFrame` (pool-backed, zero-copy shareable), `FramePool`
 (no malloc in the media loop), and `MediaClock` (monotonic + NTP for AVSync).
+The **browser** path ([web/](web/)) is independent: it uses the browser's own
+WebRTC in a mesh, with a small Node server for HTTPS + signaling relay.
 
 ## Prerequisites
 
@@ -145,12 +183,20 @@ To verify the network path without cameras: `build/src/audio/audio_loopback`
 | `src/audio`         | 8     | Mic capture + speaker playback (AVAudioEngine)  |
 | `src/ui`            | 6     | Qt6 client (OpenGL grid), `group_call`          |
 | `src/metrics`       | 7     | spdlog logging + latency/loss/CPU metrics       |
+| `src/signaling`     | 3     | WS signaling client, libjuice ICE, `RtpTransport`|
 | `signaling-server`  | 3     | Standalone uWebSockets relay server             |
 | `sfu-server`        | 8     | Integrated signaling + SFU media hub (`sfu_server`)|
+| `web`               | 8     | Zero-install browser WebRTC mesh client         |
+| `scripts`           | 8     | `run_call.sh` launcher                          |
 | `bench`             | 7     | `sfu_benchmark` (forwarding throughput)         |
 | `docs`              | 7     | Architecture documentation                      |
 
-`RtpTransport` (in `src/signaling`) bridges the ICE channel and `RtpPacket`:
-`send(RtpPacket)` serializes to the wire, inbound bytes parse back to packets.
-It is the seam that turns the single-machine `loopback_call` into the real,
-networked `group_call`.
+## Roadmap / known limits
+
+The networked call is an honest MVP. Deferred (and where they'd go):
+- **DTLS-SRTP encryption** on the native transport (currently plain RTP over ICE
+  — trusted-LAN use).
+- **Internet calls** — add STUN/TURN + a reachable host (currently LAN-only).
+- **Explicit PLI** keyframe-on-join (a newcomer currently waits up to one 2 s GOP).
+- **Lip-sync** wiring of `AVSync`'s RTCP mapping into playout, and **echo
+  cancellation** (use headphones for now).
