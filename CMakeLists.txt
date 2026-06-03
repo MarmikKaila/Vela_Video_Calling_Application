@@ -24,6 +24,7 @@ option(VC_BUILD_CODEC     "Build the FFmpeg/Opus codec module"  OFF)
 option(VC_BUILD_NETWORK   "Build RTP/jitter/signaling-client"   OFF)
 option(VC_BUILD_SFU       "Build the SFU module"                OFF)
 option(VC_BUILD_MEDIA     "Build the media pipeline + AVSync"   OFF)
+option(VC_BUILD_AUDIO     "Build mic capture + speaker playback" OFF)
 option(VC_BUILD_SIGNALING "Build the standalone signaling srv"  OFF)
 option(VC_BUILD_UI        "Build the Qt6 client UI"             OFF)
 option(VC_BUILD_METRICS   "Build logging + metrics (spdlog)"    OFF)
@@ -47,8 +48,8 @@ endif()
 
 # ---- Modules (added by their phase; safe no-ops until the dir has CMake) ----
 foreach(_mod IN ITEMS
-        src/capture src/codec src/network src/signaling src/sfu src/media src/ui
-        src/metrics signaling-server bench tests)
+        src/capture src/codec src/network src/signaling src/sfu src/audio src/media
+        src/ui src/metrics signaling-server sfu-server bench tests)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_mod}/CMakeLists.txt)
     add_subdirectory(${_mod})
   endif()
