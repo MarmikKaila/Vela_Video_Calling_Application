@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+# Build the core media stack on Linux with system (apt) dependencies and run the
+# unit tests. Signaling (uWebSockets/libjuice) and the Qt6 UI are excluded from
+# this job to keep CI fast and hermetic; the media path is the part under test.
+jobs:
+  linux-build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+            libopus-dev libsrtp2-dev libspdlog-dev \
+            libgtest-dev libgmock-dev
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DVC_BUILD_CAPTURE=ON
+          -DVC_BUILD_CODEC=ON
+          -DVC_BUILD_NETWORK=ON
+          -DVC_BUILD_SFU=ON
+          -DVC_BUILD_MEDIA=ON
+          -DVC_BUILD_METRICS=ON
+          -DVC_BUILD_BENCH=ON
+          -DVC_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 120
+
+      - name: Smoke-run SFU benchmark
+        run: ./build/bench/sfu_benchmark

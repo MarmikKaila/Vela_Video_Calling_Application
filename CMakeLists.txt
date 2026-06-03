@@ -26,6 +26,8 @@ option(VC_BUILD_SFU       "Build the SFU module"                OFF)
 option(VC_BUILD_MEDIA     "Build the media pipeline + AVSync"   OFF)
 option(VC_BUILD_SIGNALING "Build the standalone signaling srv"  OFF)
 option(VC_BUILD_UI        "Build the Qt6 client UI"             OFF)
+option(VC_BUILD_METRICS   "Build logging + metrics (spdlog)"    OFF)
+option(VC_BUILD_BENCH     "Build benchmarks"                    OFF)
 option(VC_BUILD_TESTS     "Build unit tests (gtest)"            ON)
 
 # ---- Shared contracts: header-only, depended on by every module ------------
@@ -46,7 +48,7 @@ endif()
 # ---- Modules (added by their phase; safe no-ops until the dir has CMake) ----
 foreach(_mod IN ITEMS
         src/capture src/codec src/network src/signaling src/sfu src/media src/ui
-        signaling-server tests)
+        src/metrics signaling-server bench tests)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_mod}/CMakeLists.txt)
     add_subdirectory(${_mod})
   endif()
