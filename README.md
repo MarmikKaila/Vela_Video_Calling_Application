@@ -1,6 +1,6 @@
 # video-call-app
 
-![CI](https://github.com/OWNER/video-call-app/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/MarmikKaila/Video_Calling_Cpp/actions/workflows/ci.yml/badge.svg)
 
 Low-latency, multi-party video calling in modern C++ (C++20), built on a
 **custom RTP/SFU stack** rather than libwebrtc — the protocol work is the point.
@@ -84,8 +84,14 @@ ctest --test-dir build --output-on-failure
 
 Every module is behind a `VC_BUILD_<MODULE>` flag (all default OFF except tests),
 so you can build any subset. Demos: `build/src/ui/ui_demo`,
-`build/signaling-server/signaling_server`, `build/bench/sfu_benchmark`,
-`build/src/capture/capture_dump`.
+`build/src/ui/loopback_call`, `build/signaling-server/signaling_server`,
+`build/bench/sfu_benchmark`, `build/src/capture/capture_dump`.
+
+`loopback_call` is the closest thing to a real call on one machine: your live
+camera rendered raw on the left, and the *same* feed after a full
+encode → RTP → JitterBuffer → decode round trip on the right — the gap between
+the two tiles is the pipeline's glass-to-glass latency. On macOS, grant your
+terminal Camera permission (System Settings → Privacy & Security → Camera).
 
 ## Layout
 
@@ -102,4 +108,3 @@ so you can build any subset. Demos: `build/src/ui/ui_demo`,
 | `signaling-server`  | 3     | Standalone uWebSockets signaling server         |
 | `bench`             | 7     | `sfu_benchmark` (forwarding throughput)         |
 | `docs`              | 7     | Architecture documentation                      |
-```
