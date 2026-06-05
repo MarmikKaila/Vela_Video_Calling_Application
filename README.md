@@ -1,6 +1,6 @@
 # Vela
 
-
+> Repo: **github.com/MarmikKaila/Vela_Video_Calling_Application**
 
 **Vela** — low-latency, multi-party video calling in modern C++ (C++20), built on
 a **custom RTP/SFU stack** rather than libwebrtc — the protocol work is the point.
@@ -30,6 +30,60 @@ model, and design decisions.
 
 The native stack is the engineering centerpiece; the browser app exists so anyone
 can join a call instantly without building anything.
+
+## Table of contents
+
+- [Quick start — make a call](#quick-start--make-a-call)
+- [Status](#status)
+- [Architecture (native stack)](#architecture-native-stack)
+- [Security (DTLS-SRTP)](#security)
+- [Prerequisites](#prerequisites)
+- [Build](#build)
+- [Running everything](#running-everything)
+- [Testing](#testing)
+- [Project layout](#layout)
+- [Roadmap / known limits](#roadmap--known-limits)
+
+## Quick start — make a call
+
+The fastest way to actually talk to someone is the **browser app** — nothing to
+build, and the other person only needs a browser.
+
+### A) Same Wi-Fi
+
+```sh
+cd web
+npm install                 # one time
+node server.js              # prints https://<lan-ip>:8443/?room=demo
+```
+Open that link on each laptop → click through the one-time self-signed-cert
+warning (Chrome: type `thisisunsafe`; Safari: Show Details → visit) → enter a
+name → **Join** → allow Camera + Mic.
+
+### B) Different Wi-Fi / over the internet  ← recommended for two networks
+
+Run the server in HTTP mode and expose it with a free Cloudflare tunnel (gives a
+real HTTPS URL — **no cert warning** on the other device, works on any network):
+
+```sh
+brew install cloudflared    # one time
+
+# terminal 1 — the server:
+cd web && PLAIN_HTTP=1 node server.js
+
+# terminal 2 — the public tunnel:
+cloudflared tunnel --url http://localhost:8443
+```
+`cloudflared` prints a line ending in `.trycloudflare.com`. Add a room and share
+it, e.g. `https://<random-words>.trycloudflare.com/?room=mymeeting`. Both people
+open it → **Join**. STUN/TURN are pre-configured and the browser encrypts media
+(DTLS-SRTP). The link lives until you stop the tunnel (Ctrl-C); restarting gives
+a new one. For a permanent URL, deploy `web/` to fly.io (see [web/](web/)).
+
+### C) Native C++ app (the from-scratch RTP/SFU/DTLS-SRTP engine)
+
+Build it (see [Build](#build)), then [run a call](#running-everything). This is
+the portfolio centerpiece; the browser app above is for convenience.
 
 ## Status
 
@@ -138,17 +192,22 @@ encode → RTP → JitterBuffer → decode round trip on the right — the gap b
 the two tiles is the pipeline's glass-to-glass latency. On macOS, grant your
 terminal Camera permission (System Settings → Privacy & Security → Camera).
 
-## Easiest: browser meeting via an invite link (no install)
+## Running everything
 
-Want the "send a link, click, you're in" experience with nothing to install on
-the other machine? See **[web/](web/)** — a zero-install browser client (WebRTC
-mesh) for laptops on the same Wi-Fi. The host runs `node server.js` and shares a
-`https://<lan-ip>:8443/?room=demo` link; everyone else just opens it in a browser
-and clicks Join. This uses the browser's built-in WebRTC (so it runs anywhere,
-Intel or Apple Silicon); the native `group_call` below is the from-scratch
-raw-RTP/SFU implementation.
+The runnable pieces (build flags in [Build](#build)):
 
-## Run a real call with the native app
+| Binary | What it does |
+|--------|--------------|
+| `web/` (Node) | Zero-install **browser** meeting — see [Quick start](#quick-start--make-a-call) |
+| `sfu_server` + `group_call` | The native **encrypted multi-party call** (below) |
+| `loopback_call` | Single machine: your camera through encode → RTP → jitter → decode |
+| `audio_loopback` | Single machine: mic → Opus → speaker (hear yourself) |
+| `ui_demo` | Qt UI grid driven by mock frames (no camera needed) |
+| `signaling_server` | Standalone WebSocket relay (used by tests / mesh signaling) |
+| `sfu_benchmark` | SFU forwarding throughput micro-benchmark |
+| `capture_dump` | Dump raw camera frames to disk |
+
+### Native multi-party call (`group_call` + `sfu_server`)
 
 `group_call` is an actual multi-party meeting: each client opens one ICE channel
 to an `sfu_server`, sends its camera + microphone up it, and receives every other
@@ -182,8 +241,25 @@ export VC_TURN_USER=openrelayproject VC_TURN_PASS=openrelayproject
 `VC_STUN=off` forces LAN-only. STUN handles most home networks; TURN relays media
 when a direct path is blocked (strict/symmetric NAT).
 
-To verify the path without cameras: `build/src/audio/audio_loopback` (hear
-yourself) and the `sfu_smoketest` / `test_rtp_transport` / `test_dtls_srtp` tests.
+## Testing
+
+```sh
+ctest --test-dir build --output-on-failure        # all 11 unit tests
+```
+
+Notable tests (no camera/network hardware required):
+
+| Test | Proves |
+|------|--------|
+| `test_dtls_srtp` | DTLS handshake, SRTP round trip, **fingerprint-mismatch rejected** (MITM-safe) |
+| `test_rtp_transport` | RTP travels byte-identical over a real loopback ICE pair |
+| `sfu_smoketest` | two secured clients connect through `sfu_server`; RTP is forwarded |
+| `media_tests` | full encode → RTP → jitter → decode loopback |
+| `codec_roundtrip` | H.264/Opus encode→decode within a PSNR bound |
+
+The encrypted SFU path is also exercised end-to-end by `sfu_smoketest` (start
+`sfu_server`, run the smoketest against it). `build/src/audio/audio_loopback`
+lets you hear yourself through the real mic → Opus → speaker path.
 
 ## Security
 
