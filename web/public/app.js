@@ -157,7 +157,11 @@ function getPeer(id) {
 
   pc.ontrack = (e) => {
     if (!p.refs) { p.refs = makeTile(id, p.name, false); updateCount(); }
-    p.refs.video.srcObject = e.streams[0];
+    const el = p.refs.video;
+    el.srcObject = e.streams[0];
+    el.muted = false;          // remote audio must be audible (only self is muted)
+    el.volume = 1;
+    el.play().catch(() => {}); // autoplay of unmuted media often needs a nudge
     // Reflect the remote's mute/camera state from the track's mute events.
     const t = e.track;
     const sync = () => {
@@ -259,6 +263,19 @@ function leave() {
   $('lobby').classList.remove('hidden');
   startPreview(); // back to lobby with the camera preview live
 }
+
+// Autoplay recovery: if the browser blocked remote audio until a user gesture,
+// any click/keypress retries playback on every remote tile.
+function resumeAllAudio() {
+  for (const [, p] of peers) {
+    if (p.refs && p.refs.video) {
+      p.refs.video.muted = false;
+      p.refs.video.play().catch(() => {});
+    }
+  }
+}
+document.addEventListener('click', resumeAllAudio, { passive: true });
+document.addEventListener('keydown', resumeAllAudio, { passive: true });
 
 // Start the lobby preview immediately.
 startPreview();
