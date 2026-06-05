@@ -33,7 +33,7 @@ can join a call instantly without building anything.
 
 ## Status
 
-All modules implemented and tested together (**10/10 unit tests green** on macOS):
+All modules implemented and tested together (**11/11 unit tests green** on macOS):
 
 | Module | What it does | Verified by |
 |--------|--------------|-------------|
@@ -41,7 +41,7 @@ All modules implemented and tested together (**10/10 unit tests green** on macOS
 | `src/capture`  | AVFoundation capture (+ V4L2/DShow stubs), `capture_dump` | live camera, `capture_tests` |
 | `src/codec`    | H.264 (FFmpeg) + Opus encode/decode | `codec_roundtrip` (PSNR) |
 | `src/network`  | RTP, FU-A, thread-safe JitterBuffer | `rtp_handler`, `jitter_buffer` |
-| `src/signaling`| WS signaling client + libjuice ICE + `RtpTransport` | `test_signaling`, `test_rtp_transport` |
+| `src/signaling`| WS client, libjuice ICE/STUN/TURN, `RtpTransport`, DTLS-SRTP | `test_signaling`, `test_rtp_transport`, `test_dtls_srtp` |
 | `src/audio`    | Mic capture + speaker playback (AVAudioEngine) | `audio_loopback` (hear yourself) |
 | `src/media`    | Send/receive pipeline, AVSync, `ReceiveRouter` (SSRC demux) | `media_tests` (end-to-end loopback) |
 | `src/sfu`      | True SFU forwarding + REMB ABR | `sfu_tests` |
