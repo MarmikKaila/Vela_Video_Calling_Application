@@ -41,6 +41,7 @@
 #include "common/Clock.h"
 #include "media/MediaPipeline.h"
 #include "media/ReceiveRouter.h"
+#include "signaling/DtlsSrtp.h"
 #include "signaling/RtpTransport.h"
 #include "signaling/SignalingClient.h"
 #include "ui/MainWindow.h"
@@ -179,8 +180,10 @@ int main(int argc, char** argv) {
                     to_string(s).data());
         std::fflush(stdout);
     };
-    signaling::NATConfig iceCfg;
-    iceCfg.stunHost = "";  // LAN: host candidates only
+    // STUN/TURN from the environment (defaults to Google STUN; set VC_TURN for
+    // cross-network relay, VC_STUN=off for LAN-only).
+    const signaling::NATConfig iceCfg = signaling::iceConfigFromEnv();
+    transport->enableSecurity(/*asClient=*/true);  // offerer = DTLS client
     if (!transport->initialize(iceCfg, std::move(tcbs))) {
         std::fprintf(stderr, "Failed to initialize ICE transport\n");
         return 1;
@@ -190,12 +193,19 @@ int main(int argc, char** argv) {
     // --- Signaling callbacks (net thread) ------------------------------------
     signaling::SignalingCallbacks scbs;
     scbs.onJoined = [transport, signaling](signaling::PeerId /*self*/) {
-        // We are the offerer: hand the server our ICE description.
+        // Offerer: send our ICE description + DTLS fingerprint to the server.
         auto desc = transport->localDescription();
-        if (desc) (void)signaling->sendOffer(0, desc.value());
+        if (desc) {
+            const std::string payload =
+                signaling::DtlsSrtp::packDescription(desc.value(), transport->localFingerprint());
+            (void)signaling->sendOffer(0, payload);
+        }
     };
-    scbs.onAnswer = [transport](signaling::PeerId, const std::string& sdp) {
-        (void)transport->setRemoteDescription(sdp);
+    scbs.onAnswer = [transport](signaling::PeerId, const std::string& payload) {
+        std::string ice, fp;
+        signaling::DtlsSrtp::unpackDescription(payload, ice, fp);
+        transport->setRemoteFingerprint(fp);     // authenticates the DTLS peer
+        (void)transport->setRemoteDescription(ice);
     };
     scbs.onIceCandidate = [transport](signaling::PeerId, const std::string& cand) {
         (void)transport->addRemoteCandidate(cand);

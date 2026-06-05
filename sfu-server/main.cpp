@@ -37,6 +37,7 @@
 
 #include "network/RtpPacket.h"
 #include "sfu/SFUServer.h"
+#include "signaling/DtlsSrtp.h"
 #include "signaling/RtpTransport.h"
 
 namespace {
@@ -85,8 +86,9 @@ int main(int argc, char** argv) {
     auto nextId = std::make_shared<std::uint32_t>(1);
     uWS::Loop* loop = uWS::Loop::get();  // this thread runs app.run()
 
-    NATConfig iceCfg;
-    iceCfg.stunHost = "";  // LAN: host candidates only, no STUN
+    // STUN/TURN from the environment (defaults to Google STUN; set VC_TURN for
+    // cross-network relay, VC_STUN=off for LAN-only). See iceConfigFromEnv.
+    const NATConfig iceCfg = vc::signaling::iceConfigFromEnv();
 
     WsApp app;
     app.ws<PerSocketData>("/*", {
@@ -148,6 +150,7 @@ int main(int argc, char** argv) {
                     sfu->routePacket(room, id, pkt);
                 };
 
+                st->transport->enableSecurity(/*asClient=*/false);  // answerer = DTLS server
                 if (!st->transport->initialize(iceCfg, std::move(cbs))) {
                     sendJson(ws, {{"type", "error"}, {"reason", "ICE init failed"}});
                     return;
@@ -164,13 +167,20 @@ int main(int argc, char** argv) {
             ClientState& st = *psd->state;
 
             if (type == "offer") {
-                const std::string sdp = j.value("payload", std::string{});
-                if (!st.transport->setRemoteDescription(sdp)) {
+                const std::string payload = j.value("payload", std::string{});
+                std::string ice, fp;
+                vc::signaling::DtlsSrtp::unpackDescription(payload, ice, fp);
+                if (!st.transport->setRemoteDescription(ice)) {
                     sendJson(ws, {{"type", "error"}, {"reason", "bad offer"}});
                     return;
                 }
+                st.transport->setRemoteFingerprint(fp);  // authenticate the client
                 auto answer = st.transport->localDescription();
-                if (answer) sendJson(ws, {{"type", "answer"}, {"payload", answer.value()}});
+                if (answer) {
+                    const std::string out = vc::signaling::DtlsSrtp::packDescription(
+                        answer.value(), st.transport->localFingerprint());
+                    sendJson(ws, {{"type", "answer"}, {"payload", out}});
+                }
                 return;
             }
             if (type == "ice") {

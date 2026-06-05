@@ -19,8 +19,11 @@
 // thread, so onPacket/onLocalCandidate/onStateChanged must be thread-safe.
 // send() may be called from any thread (the capture/encode thread).
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -29,6 +32,8 @@
 #include "signaling/NATTraversal.h"
 
 namespace vc::signaling {
+
+class DtlsSrtp;  // optional DTLS-SRTP security layer (defined in DtlsSrtp.h)
 
 class RtpTransport {
 public:
@@ -43,7 +48,8 @@ public:
         std::function<void()> onGatheringDone;
     };
 
-    RtpTransport() = default;
+    RtpTransport();
+    ~RtpTransport();  // defined out-of-line (DtlsSrtp is incomplete here)
 
     RtpTransport(const RtpTransport&) = delete;
     RtpTransport& operator=(const RtpTransport&) = delete;
@@ -51,6 +57,17 @@ public:
     // Create the ICE agent and install callbacks. `cfg.stunHost` may be left
     // empty for strictly-LAN use (host candidates only). Fails as NATTraversal.
     [[nodiscard]] Status initialize(const NATConfig& cfg, Callbacks cbs);
+
+    // --- Optional DTLS-SRTP encryption ---------------------------------------
+    // Enable security BEFORE initialize(): `asClient` is the DTLS role (the
+    // signaling offerer should be the client). Once ICE connects and the peer
+    // fingerprint is known, a DTLS handshake runs and all RTP is SRTP-encrypted.
+    void enableSecurity(bool asClient);
+    // This process's certificate fingerprint, to advertise via signaling.
+    [[nodiscard]] std::string localFingerprint() const;
+    // The peer's fingerprint, learned from signaling; triggers the handshake
+    // once ICE is also connected. Required before media can flow when secured.
+    void setRemoteFingerprint(std::string fingerprint);
 
     // --- ICE setup, forwarded to the wrapped NATTraversal --------------------
     [[nodiscard]] Status startGathering() { return nat_.startGathering(); }
@@ -73,9 +90,24 @@ public:
 
     [[nodiscard]] IceState state() const noexcept { return nat_.state(); }
 
+    // True once the DTLS handshake has completed and SRTP keys are active.
+    // Always false when security is not enabled.
+    [[nodiscard]] bool secureReady() const;
+
 private:
+    void maybeStartHandshake();
+
     NATTraversal nat_;
     Callbacks cbs_;
+
+    // DTLS-SRTP state (only active after enableSecurity()).
+    std::unique_ptr<DtlsSrtp> dtls_;
+    bool secured_ = false;
+    bool asClient_ = true;
+    std::string remoteFp_;
+    std::atomic<bool> iceConnected_{false};
+    bool handshakeStarted_ = false;
+    std::mutex startMu_;  // guards remoteFp_/handshakeStarted_ start decision
 };
 
 }  // namespace vc::signaling

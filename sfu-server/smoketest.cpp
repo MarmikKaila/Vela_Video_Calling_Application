@@ -19,6 +19,7 @@
 #include <thread>
 
 #include "network/RtpPacket.h"
+#include "signaling/DtlsSrtp.h"
 #include "signaling/RtpTransport.h"
 #include "signaling/SignalingClient.h"
 
@@ -48,6 +49,7 @@ struct Client {
         tcbs.onPacket = [this](const RtpPacket&) { received.fetch_add(1); };
         signaling::NATConfig cfg;
         cfg.stunHost = "";
+        transport->enableSecurity(/*asClient=*/true);  // matches the secured server
         if (!transport->initialize(cfg, std::move(tcbs))) return false;
         if (!transport->startGathering()) return false;
 
@@ -55,10 +57,16 @@ struct Client {
         auto tp = transport;
         scbs.onJoined = [tp, sigPtr](signaling::PeerId) {
             auto d = tp->localDescription();
-            if (d) (void)sigPtr->sendOffer(0, d.value());
+            if (d) {
+                (void)sigPtr->sendOffer(
+                    0, signaling::DtlsSrtp::packDescription(d.value(), tp->localFingerprint()));
+            }
         };
-        scbs.onAnswer = [tp](signaling::PeerId, const std::string& sdp) {
-            (void)tp->setRemoteDescription(sdp);
+        scbs.onAnswer = [tp](signaling::PeerId, const std::string& payload) {
+            std::string ice, fp;
+            signaling::DtlsSrtp::unpackDescription(payload, ice, fp);
+            tp->setRemoteFingerprint(fp);
+            (void)tp->setRemoteDescription(ice);
         };
         scbs.onIceCandidate = [tp](signaling::PeerId, const std::string& c) {
             (void)tp->addRemoteCandidate(c);
@@ -97,6 +105,18 @@ int main(int argc, char** argv) {
     if (!waitFor(a.connected, 20s) || !waitFor(b.connected, 20s)) {
         std::fprintf(stderr, "FAIL: ICE did not connect (a=%d b=%d)\n",
                      a.connected.load(), b.connected.load());
+        return 1;
+    }
+    // Wait for the DTLS-SRTP handshake to complete on both legs before sending
+    // (RtpTransport drops media until SRTP keys exist).
+    const auto secureDeadline = std::chrono::steady_clock::now() + 20s;
+    while ((!a.transport->secureReady() || !b.transport->secureReady()) &&
+           std::chrono::steady_clock::now() < secureDeadline) {
+        std::this_thread::sleep_for(20ms);
+    }
+    if (!a.transport->secureReady() || !b.transport->secureReady()) {
+        std::fprintf(stderr, "FAIL: DTLS-SRTP handshake did not complete (a=%d b=%d)\n",
+                     a.transport->secureReady(), b.transport->secureReady());
         return 1;
     }
     // Give the server a moment to register both participants with the SFU.
