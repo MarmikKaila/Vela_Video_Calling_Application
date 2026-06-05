@@ -104,8 +104,10 @@ All modules implemented and tested together (**11/11 unit tests green** on macOS
 | `src/metrics`  | spdlog logging + latency/loss/CPU metrics | `metrics_tests` |
 | `web/`         | Zero-install browser WebRTC mesh client | signaling relay verified headlessly |
 
-Benchmark (Apple M-series, single core): **~5,374 eight-party rooms/core** of
-encoded-RTP forwarding (see [docs/ARCHITECTURE.md §9](docs/ARCHITECTURE.md)).
+**Measured** on Apple M5 (Release): video codec+RTP processing **~0.84 ms** mean,
+SFU forwarding **~0.5 µs/packet → ~5,366 eight-party rooms/core**, DTLS-SRTP
+secure-channel setup **~155 ms** (loopback), video round-trip **49.97 dB PSNR**.
+Full numbers, raw outputs, and reproduction steps in **[observations/](observations/)**.
 
 ## Architecture (native stack)
 
@@ -297,6 +299,7 @@ Native media is protected with **DTLS-SRTP** — the same scheme browsers use:
 | `scripts`           | 8     | `run_call.sh` launcher                          |
 | `bench`             | 7     | `sfu_benchmark` (forwarding throughput)         |
 | `docs`              | 7     | Architecture documentation                      |
+| `observations`      | 8     | Measured latency/throughput results + raw outputs |
 
 ## Roadmap / known limits
 

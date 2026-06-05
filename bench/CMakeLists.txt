@@ -10,3 +10,9 @@ endif()
 
 add_executable(sfu_benchmark sfu_benchmark.cpp)
 target_link_libraries(sfu_benchmark PRIVATE vc_sfu vc_network vc_metrics vc_common)
+
+# Pipeline latency probe needs the codecs too (real encode/decode timing).
+if(TARGET vc_codec)
+  add_executable(latency_probe latency_probe.cpp)
+  target_link_libraries(latency_probe PRIVATE vc_codec vc_network vc_metrics vc_common)
+endif()

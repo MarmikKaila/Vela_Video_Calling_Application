@@ -1,0 +1,7 @@
+# Captured 2026-06-05 on Apple M5, macOS 26.5, 10 cores, Release build
+
+SFU forwarding benchmark (single core)
+n=2 | route=14.87M/s deliveries=14.87M/s | p50=0.50us p99=0.50us | cpu=100% | => ~29750 rooms/core
+n=4 | route=13.92M/s deliveries=41.76M/s | p50=0.50us p99=0.50us | cpu=100% | => ~13919 rooms/core
+n=8 | route=10.73M/s deliveries=75.13M/s | p50=0.50us p99=0.50us | cpu=100% | => ~5366 rooms/core
+done

@@ -1,0 +1,14 @@
+# Captured 2026-06-05 on Apple M5, macOS 26.5, 10 cores, Release build
+
+ICE connect + RTP round trip (loopback):
+[       OK ] RtpTransport.LoopbackRoundTripIsByteIdentical (198 ms)
+
+ICE + DTLS-SRTP handshake + SRTP round trip (loopback):
+[       OK ] DtlsSrtp.SecureRoundTripIsByteIdentical (153 ms)
+[       OK ] DtlsSrtp.FingerprintMismatchIsRejected (8016 ms)
+
+Codec round-trip quality:
+[ video PSNR ] 49.97 dB
+[       OK ] VideoCodec.RoundTripPsnr (4 ms)
+[       OK ] VideoCodec.KeyframeBehavior (3 ms)
+[       OK ] AudioCodec.SineRoundTrip (0 ms)
