@@ -7,8 +7,11 @@ a **custom RTP/SFU stack** rather than libwebrtc — the protocol work is the po
 (Plus a zero-install browser client so anyone can join from a link.)
 
 - 1:1 and up to 8-party calls via a custom Selective Forwarding Unit (SFU)
-- Real cross-laptop calls: camera + mic over a custom **ICE/RTP transport**
-  (`RtpTransport` over libjuice), demuxed by SSRC into one tile per participant
+- Real calls **across the internet**: camera + mic over a custom ICE/RTP
+  transport (`RtpTransport` over libjuice) with **STUN/TURN** NAT traversal,
+  demuxed by SSRC into one tile per participant
+- **DTLS-SRTP encrypted** media with fingerprint authentication (the SFU
+  terminates per participant) — see [Security](#security)
 - Target glass-to-glass latency &lt; 150 ms; adaptive bitrate via RTCP REMB
 - H.264 (FFmpeg/x264) video, Opus audio; AVFoundation capture + playback on macOS
 - Cross-platform capture behind one interface (macOS / Linux / Windows)
@@ -95,7 +98,7 @@ WebRTC in a mesh, with a small Node server for HTTPS + signaling relay.
 RTC libs (building FFmpeg/Qt from source via vcpkg is too slow here):
 
 ```sh
-brew install cmake pkg-config ffmpeg opus qt spdlog googletest nlohmann-json srtp
+brew install cmake pkg-config ffmpeg opus qt spdlog googletest nlohmann-json srtp openssl@3
 git clone https://github.com/microsoft/vcpkg ~/vcpkg && ~/vcpkg/bootstrap-vcpkg.sh
 (cd /tmp && ~/vcpkg/vcpkg install libjuice uwebsockets)   # classic mode (no manifest here)
 ```
@@ -111,7 +114,7 @@ git clone https://github.com/microsoft/vcpkg ~/vcpkg && ~/vcpkg/bootstrap-vcpkg.
 ```sh
 # Point CMake at the deps (macOS):
 export CMAKE_PREFIX_PATH="$(brew --prefix qt):$(brew --prefix googletest):$(brew --prefix spdlog):$(brew --prefix nlohmann-json):$HOME/vcpkg/installed/arm64-osx:$(brew --prefix)"
-export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$(brew --prefix srtp)/lib/pkgconfig:$HOME/vcpkg/installed/arm64-osx/lib/pkgconfig"
+export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$(brew --prefix srtp)/lib/pkgconfig:$(brew --prefix openssl@3)/lib/pkgconfig:$HOME/vcpkg/installed/arm64-osx/lib/pkgconfig"
 
 cmake -S . -B build \
   -DVC_BUILD_CAPTURE=ON -DVC_BUILD_CODEC=ON -DVC_BUILD_NETWORK=ON \
@@ -145,12 +148,13 @@ and clicks Join. This uses the browser's built-in WebRTC (so it runs anywhere,
 Intel or Apple Silicon); the native `group_call` below is the from-scratch
 raw-RTP/SFU implementation.
 
-## Run a real call with the native app (two laptops, same Wi-Fi)
+## Run a real call with the native app
 
 `group_call` is an actual multi-party meeting: each client opens one ICE channel
 to an `sfu_server`, sends its camera + microphone up it, and receives every other
 participant's audio/video back down it (the SFU forwards encoded RTP verbatim,
-demuxed by SSRC into one tile per remote video).
+demuxed by SSRC into one tile per remote). **All media is DTLS-SRTP encrypted**
+(see [Security](#security)).
 
 ```sh
 # Laptop A — run the hub, then join:
@@ -163,13 +167,39 @@ scripts/run_call.sh client <A-ip> demo
 
 Grant the terminal **Camera and Microphone** permission on both machines (System
 Settings → Privacy & Security). **Use headphones** — there is no echo
-cancellation. A third laptop can join `demo` and a tile appears within ~2 s (the
-next GOP keyframe). Audio is 48 kHz Opus; video is H.264. Currently LAN-only
-(ICE host candidates, no STUN); a newcomer relies on the encoder's 2 s keyframe
-interval rather than an explicit PLI.
+cancellation.
 
-To verify the network path without cameras: `build/src/audio/audio_loopback`
-(hear yourself) and the `sfu_smoketest` / `test_rtp_transport` unit tests.
+**Across different networks (over the internet):** STUN/TURN come from env vars,
+so the same binaries work on any network. The `sfu_server` must be reachable
+(a small public VM, or local + a tunnel) and both ends point at free STUN/TURN:
+
+```sh
+export VC_STUN=stun.l.google.com:19302
+export VC_TURN=openrelay.metered.ca:80
+export VC_TURN_USER=openrelayproject VC_TURN_PASS=openrelayproject
+# then run sfu_server (on the reachable host) and group_call on each machine
+```
+`VC_STUN=off` forces LAN-only. STUN handles most home networks; TURN relays media
+when a direct path is blocked (strict/symmetric NAT).
+
+To verify the path without cameras: `build/src/audio/audio_loopback` (hear
+yourself) and the `sfu_smoketest` / `test_rtp_transport` / `test_dtls_srtp` tests.
+
+## Security
+
+Native media is protected with **DTLS-SRTP** — the same scheme browsers use:
+
+- After ICE connects, the peers run a **DTLS handshake** over the channel and
+  derive **SRTP** keys; every RTP packet is then encrypted and authenticated.
+- Each peer's self-signed certificate **fingerprint is carried in the signaling
+  offer/answer** and verified during the handshake, so a network attacker can
+  neither read nor inject media (no MITM) — `test_dtls_srtp` proves a fingerprint
+  mismatch is rejected.
+- The **SFU terminates DTLS-SRTP per participant**: it decrypts on the inbound
+  hop to read RTP headers for routing, then re-encrypts per recipient — exactly
+  how production SFUs work. (libjuice ICE + OpenSSL DTLS + libsrtp.)
+- The **browser client** ([web/](web/)) is encrypted by the browser's own
+  mandatory DTLS-SRTP.
 
 ## Layout
 
@@ -194,10 +224,10 @@ To verify the network path without cameras: `build/src/audio/audio_loopback`
 
 ## Roadmap / known limits
 
-The networked call is an honest MVP. Deferred (and where they'd go):
-- **DTLS-SRTP encryption** on the native transport (currently plain RTP over ICE
-  — trusted-LAN use).
-- **Internet calls** — add STUN/TURN + a reachable host (currently LAN-only).
+Shipped: DTLS-SRTP encryption and STUN/TURN cross-network calling (above).
+Still deferred:
 - **Explicit PLI** keyframe-on-join (a newcomer currently waits up to one 2 s GOP).
 - **Lip-sync** wiring of `AVSync`'s RTCP mapping into playout, and **echo
   cancellation** (use headphones for now).
+- **TURN at scale** — the default free public TURN is fine for demos; point
+  `VC_TURN` / `ICE_SERVERS_JSON` at your own coturn for heavier use.

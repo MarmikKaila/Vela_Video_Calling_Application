@@ -37,9 +37,9 @@ Single-machine variants exercise the same pipeline without a network:
 and `audio_loopback` (mic → Opus → speaker). A separate **browser** client
 ([web/](../web/)) offers a zero-install WebRTC-mesh call — see §11.
 
-> Transport note: the native transport is plain RTP over a libjuice ICE/UDP
-> channel. **DTLS-SRTP encryption is not implemented** — this is a trusted-LAN /
-> protocol-demonstration build, not a production-secure one.
+> Transport: RTP over a libjuice ICE/UDP channel with **STUN/TURN** for
+> cross-network NAT traversal, secured end-to-end with **DTLS-SRTP** (the SFU
+> terminates it per participant). See §11.
 
 ## 2. Module dependency graph
 
@@ -220,10 +220,25 @@ Verified end-to-end headlessly by `sfu_smoketest` (two clients connect ICE
 through a live server; one's RTP is forwarded to the other) and
 `test_rtp_transport` (byte-identical RTP over a loopback ICE pair).
 
-**MVP limits:** plain RTP over ICE (no DTLS-SRTP), LAN-only (no STUN/TURN),
-keyframe-on-join relies on the 2 s GOP rather than an explicit PLI, and audio/
-video play from independent jitter buffers (AVSync mapping not yet wired into
-playout).
+**Security (DTLS-SRTP).** After ICE connects, `RtpTransport` runs a DTLS
+handshake over the channel (OpenSSL, `src/signaling/DtlsSrtp`) and derives
+**SRTP** keys via the `use_srtp` extension; every RTP packet is then encrypted
+and authenticated with libsrtp. Each peer's self-signed-certificate fingerprint
+is carried in the signaling offer/answer and verified during the handshake, so a
+network attacker can neither read nor inject media (no MITM). Encryption is
+transparent in `RtpTransport`, so the **SFU terminates DTLS-SRTP per
+participant** — it decrypts inbound to read RTP headers for routing, then
+re-encrypts per recipient, exactly like a production SFU. `test_dtls_srtp` covers
+the handshake, an SRTP round trip, and fingerprint-mismatch rejection.
+
+**Cross-network (STUN/TURN).** `NATConfig` carries a STUN server and TURN relays
+(`iceConfigFromEnv` reads `VC_STUN` / `VC_TURN[_USER|_PASS]`), populated into
+libjuice. STUN discovers the public address; TURN relays media when a direct path
+is blocked, so calls work across arbitrary networks.
+
+**MVP limits:** keyframe-on-join relies on the 2 s GOP rather than an explicit
+PLI; audio/video play from independent jitter buffers (AVSync mapping not yet
+wired into playout); no echo cancellation.
 
 ## 12. The browser client (`web/`)
 
