@@ -1,6 +1,6 @@
 # Vela
 
-![CI](https://github.com/MarmikKaila/Video_Calling_Cpp/actions/workflows/ci.yml/badge.svg)
+
 
 **Vela** — low-latency, multi-party video calling in modern C++ (C++20), built on
 a **custom RTP/SFU stack** rather than libwebrtc — the protocol work is the point.
