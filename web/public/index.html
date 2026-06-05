@@ -2,44 +2,80 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Video Call</title>
-  <style>
-    :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; font-family: -apple-system, system-ui, sans-serif;
-      background: #0d0d12; color: #eee; height: 100vh; display: flex; flex-direction: column;
-    }
-    #bar { padding: 10px 14px; display: flex; gap: 10px; align-items: center; background: #16161d; }
-    #bar input { background: #23232d; color: #eee; border: 1px solid #333; border-radius: 6px; padding: 6px 10px; }
-    #bar button {
-      background: #2d6cdf; color: #fff; border: 0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-weight: 600;
-    }
-    #bar button.off { background: #444; }
-    #bar button:disabled { opacity: .5; cursor: default; }
-    #status { margin-left: auto; font-size: 13px; color: #9aa; }
-    #grid {
-      flex: 1; display: grid; gap: 8px; padding: 8px;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); align-content: start;
-    }
-    .tile { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 16/9; }
-    .tile video { width: 100%; height: 100%; object-fit: cover; background: #000; }
-    .tile .label {
-      position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; font-size: 12px;
-      background: rgba(0,0,0,.55); border-radius: 5px;
-    }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Vela — video calls</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="bar">
-    <strong>Room:</strong> <span id="roomName">—</span>
-    <button id="joinBtn">Join</button>
-    <button id="micBtn" class="off" disabled>Mic</button>
-    <button id="camBtn" class="off" disabled>Camera</button>
-    <span id="status">not joined</span>
-  </div>
-  <div id="grid"></div>
+  <!-- Inline SVG icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-mic" viewBox="0 0 24 24"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></symbol>
+      <symbol id="i-mic-off" viewBox="0 0 24 24"><path fill="currentColor" d="M3.3 2 2 3.3l6 6V11a3 3 0 0 0 4.6 2.5l1.4 1.4A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.92V21h2v-3.08a7 7 0 0 0 2.3-.77L20.7 22 22 20.7 3.3 2ZM15 11V6a3 3 0 0 0-5.8-1.1L15 10.9V11Z"/></symbol>
+      <symbol id="i-cam" viewBox="0 0 24 24"><path fill="currentColor" d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z"/></symbol>
+      <symbol id="i-cam-off" viewBox="0 0 24 24"><path fill="currentColor" d="M3.3 2 2 3.3 4.7 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12c.2 0 .4 0 .6-.1L20.7 22 22 20.7 3.3 2ZM21 6.5l-4 4V7a1 1 0 0 0-1-1H9.8L21 17.2V6.5Z"/></symbol>
+      <symbol id="i-leave" viewBox="0 0 24 24"><path fill="currentColor" d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .27-.11.52-.29.7l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28a11.27 11.27 0 0 0-2.66-1.85.998.998 0 0 1-.56-.9v-3.1A16.5 16.5 0 0 0 12 9Z"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path fill="currentColor" d="M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm-8 0a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-2.7 0-8 1.34-8 4v3h10v-3c0-.97.62-1.8 1.6-2.45A13 13 0 0 0 8 13Zm8 0c-.35 0-.74 0-1.16.05A5 5 0 0 1 18 17v3h6v-3c0-2.66-5.3-4-8-4Z"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- ===== Lobby (pre-join) ===== -->
+  <section id="lobby" class="lobby">
+    <div class="lobby-card">
+      <div class="brand"><span class="dot"></span> Vela</div>
+      <p class="room-line" id="roomLine">Start or join a meeting</p>
+
+      <div class="preview-wrap">
+        <video id="previewVideo" autoplay playsinline muted></video>
+        <div id="previewOff" class="preview-off hidden">
+          <div class="avatar" id="previewAvatar">?</div>
+          <span>Camera off</span>
+        </div>
+        <div class="preview-controls">
+          <button id="lobbyMic" class="round" title="Microphone"><svg class="icon"><use href="#i-mic"/></svg></button>
+          <button id="lobbyCam" class="round" title="Camera"><svg class="icon"><use href="#i-cam"/></svg></button>
+        </div>
+      </div>
+
+      <input id="nameInput" class="name-input" type="text" maxlength="24" placeholder="Your name" autocomplete="off" />
+      <div class="room-row">
+        <input id="roomInput" class="name-input room-input" type="text" maxlength="40" placeholder="Room name" autocomplete="off" />
+        <button id="newRoomBtn" class="ghost-sm" title="Generate a new room code">New</button>
+      </div>
+      <button id="joinBtn" class="btn-primary">Join meeting</button>
+      <p id="lobbyHint" class="hint">Allow camera &amp; microphone when prompted.</p>
+    </div>
+  </section>
+
+  <!-- ===== Call ===== -->
+  <section id="call" class="call hidden">
+    <header class="topbar">
+      <div class="brand sm"><span class="dot"></span> Vela</div>
+      <span class="room-chip">Room: <strong id="callRoom">demo</strong></span>
+      <span class="count-chip"><svg class="icon sm"><use href="#i-users"/></svg> <span id="count">1</span></span>
+      <button id="copyBtn" class="ghost"><svg class="icon sm"><use href="#i-copy"/></svg> Copy invite link</button>
+      <span id="toast" class="toast hidden">Link copied</span>
+    </header>
+
+    <main id="grid" class="grid"></main>
+
+    <footer class="controlbar">
+      <button id="micBtn" class="ctl" title="Mute / unmute"><svg class="icon"><use href="#i-mic"/></svg></button>
+      <button id="camBtn" class="ctl" title="Camera on / off"><svg class="icon"><use href="#i-cam"/></svg></button>
+      <button id="leaveBtn" class="ctl danger" title="Leave"><svg class="icon"><use href="#i-leave"/></svg></button>
+    </footer>
+  </section>
+
+  <!-- Tile template -->
+  <template id="tileTpl">
+    <div class="tile">
+      <video autoplay playsinline></video>
+      <div class="tile-off hidden"><div class="avatar"></div></div>
+      <div class="tile-label"><span class="mic-badge hidden"><svg class="icon xs"><use href="#i-mic-off"/></svg></span><span class="name"></span></div>
+    </div>
+  </template>
+
   <script src="app.js"></script>
 </body>
 </html>

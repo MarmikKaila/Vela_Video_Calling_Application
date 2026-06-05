@@ -1,9 +1,10 @@
-# video-call-app
+# Vela
 
 ![CI](https://github.com/MarmikKaila/Video_Calling_Cpp/actions/workflows/ci.yml/badge.svg)
 
-Low-latency, multi-party video calling in modern C++ (C++20), built on a
-**custom RTP/SFU stack** rather than libwebrtc — the protocol work is the point.
+**Vela** — low-latency, multi-party video calling in modern C++ (C++20), built on
+a **custom RTP/SFU stack** rather than libwebrtc — the protocol work is the point.
+(Plus a zero-install browser client so anyone can join from a link.)
 
 - 1:1 and up to 8-party calls via a custom Selective Forwarding Unit (SFU)
 - Real cross-laptop calls: camera + mic over a custom **ICE/RTP transport**
