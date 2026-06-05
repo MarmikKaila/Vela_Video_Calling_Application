@@ -26,7 +26,20 @@ $('roomInput').value = slugify(params.get('room') || '') || genRoom();
 if (params.get('room')) $('roomLine').textContent = "You've been invited to a meeting";
 $('newRoomBtn').onclick = () => { $('roomInput').value = genRoom(); };
 
-const RTC_CONFIG = { iceServers: [] };
+// ICE servers are fetched from the server's /config so STUN/TURN can be swapped
+// without editing the client. Falls back to free Google STUN (LAN/direct still
+// works; cross-NAT needs the TURN entries the server provides).
+let RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+async function loadIceConfig() {
+  try {
+    const r = await fetch('/config', { cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      if (Array.isArray(j.iceServers) && j.iceServers.length) RTC_CONFIG = { iceServers: j.iceServers };
+    }
+  } catch { /* keep the STUN fallback */ }
+}
+loadIceConfig();
 
 let localStream = null;
 let camOn = true;
@@ -79,6 +92,7 @@ $('nameInput').oninput = () => { $('previewAvatar').textContent = initialOf($('n
 
 $('joinBtn').onclick = async () => {
   if (!(await ensureStream())) return;
+  await loadIceConfig(); // ensure STUN/TURN are in place before any peer connects
   ROOM = slugify($('roomInput').value) || genRoom();
   myName = ($('nameInput').value || '').trim() || 'Guest';
   // Reflect the room in the URL so "Copy invite link" shares this exact room.

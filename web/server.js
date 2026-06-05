@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const http = require('http');
 const { execSync } = require('child_process');
 const os = require('os');
 
@@ -23,13 +24,18 @@ try {
   process.exit(1);
 }
 
-const PORT = parseInt(process.argv[2], 10) || 8443;
+// PLAIN_HTTP=1 runs plain HTTP — for hosting behind a platform that terminates
+// TLS at its edge (fly.io, Render, a tunnel). Browsers still see HTTPS via the
+// edge, so camera/mic work. Locally we serve HTTPS ourselves (self-signed) so
+// the camera works on a LAN IP.
+const PLAIN = process.env.PLAIN_HTTP === '1';
+const PORT = parseInt(process.env.PORT, 10) || parseInt(process.argv[2], 10) || 8443;
 const DIR = path.join(__dirname, 'public');
 const CERT = path.join(__dirname, 'cert.pem');
 const KEY = path.join(__dirname, 'key.pem');
 
-// --- Self-signed certificate (one-time) ------------------------------------
-if (!fs.existsSync(CERT) || !fs.existsSync(KEY)) {
+// --- Self-signed certificate (one-time, local HTTPS only) ------------------
+if (!PLAIN && (!fs.existsSync(CERT) || !fs.existsSync(KEY))) {
   console.log('Generating a self-signed certificate (one-time)...');
   execSync(
     `openssl req -x509 -newkey rsa:2048 -nodes -keyout "${KEY}" -out "${CERT}" ` +
@@ -38,21 +44,43 @@ if (!fs.existsSync(CERT) || !fs.existsSync(KEY)) {
   );
 }
 
+// --- ICE servers (STUN + TURN) ----------------------------------------------
+// Browsers need STUN to discover their public address and TURN to relay media
+// when a direct path is blocked (symmetric/strict NAT) — that is what makes
+// calls work across different networks. Defaults are free: Google STUN + the
+// Open Relay project's public TURN (no signup). Override with ICE_SERVERS_JSON
+// to point at your own coturn / a managed TURN free tier.
+const ICE_SERVERS = process.env.ICE_SERVERS_JSON
+  ? JSON.parse(process.env.ICE_SERVERS_JSON)
+  : [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      // TCP/443 helps when UDP is blocked on restrictive networks.
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    ];
+
 // --- Static file serving ----------------------------------------------------
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = https.createServer(
-  { cert: fs.readFileSync(CERT), key: fs.readFileSync(KEY) },
-  (req, res) => {
-    const urlPath = decodeURIComponent(req.url.split('?')[0]);
-    let file = path.join(DIR, urlPath === '/' ? 'index.html' : urlPath);
-    if (!file.startsWith(DIR)) return res.writeHead(403).end(); // no traversal
-    fs.readFile(file, (err, data) => {
-      if (err) return res.writeHead(404).end('Not found');
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
-      res.end(data);
-    });
+function handler(req, res) {
+  const urlPath = decodeURIComponent(req.url.split('?')[0]);
+  // Runtime config for the client (ICE servers, kept out of the static JS).
+  if (urlPath === '/config') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ iceServers: ICE_SERVERS }));
   }
-);
+  let file = path.join(DIR, urlPath === '/' ? 'index.html' : urlPath);
+  if (!file.startsWith(DIR)) return res.writeHead(403).end(); // no traversal
+  fs.readFile(file, (err, data) => {
+    if (err) return res.writeHead(404).end('Not found');
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+    res.end(data);
+  });
+}
+
+const server = PLAIN
+  ? http.createServer(handler)
+  : https.createServer({ cert: fs.readFileSync(CERT), key: fs.readFileSync(KEY) }, handler);
 
 // --- Signaling relay --------------------------------------------------------
 // rooms: roomName -> Map(peerId -> ws). Each ws gets an id + room on join.
@@ -114,9 +142,16 @@ function lanIp() {
 }
 
 server.listen(PORT, () => {
+  if (PLAIN) {
+    console.log(`Meeting server (HTTP, behind edge TLS) listening on :${PORT}`);
+    console.log('Share your public https URL with ?room=<name>.');
+    return;
+  }
   const ip = lanIp();
-  console.log('\nMeeting server running. Share this invite link (same Wi-Fi):\n');
+  console.log('\nMeeting server running. Share this invite link:\n');
   console.log(`    https://${ip}:${PORT}/?room=demo\n`);
-  console.log('On each device: open the link, accept the certificate warning once,');
+  console.log('Same Wi-Fi: works as-is. Across networks: expose it publicly');
+  console.log('(cloudflared tunnel / fly.io) — TURN is already configured.');
+  console.log('On each device: open the link, accept the cert warning once,');
   console.log('then click Join and allow Camera + Microphone.\n');
 });
