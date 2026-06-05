@@ -31,10 +31,12 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "common/Error.h"
 
-struct juice_agent;  // opaque libjuice type, forward-declared
+struct juice_agent;       // opaque libjuice type, forward-declared
+struct juice_turn_server; // ditto
 
 namespace vc::signaling {
 
@@ -50,13 +52,32 @@ enum class IceState {
 
 [[nodiscard]] std::string_view to_string(IceState s) noexcept;
 
+// A TURN relay server. Used when a direct/STUN path can't be established
+// (symmetric/strict NAT) — media is relayed through it, which is what makes
+// calls work across arbitrary networks.
+struct TurnServer {
+    std::string host;
+    std::uint16_t port = 3478;
+    std::string username;
+    std::string password;
+};
+
 // Configuration for an ICE agent.
 struct NATConfig {
     // STUN server for server-reflexive candidates. Empty disables STUN and
     // gathers host candidates only (useful for strictly-local/offline tests).
     std::string stunHost = "stun.l.google.com";
     std::uint16_t stunPort = 19302;
+    // Optional TURN relays, tried when direct/STUN fails.
+    std::vector<TurnServer> turnServers;
 };
+
+// Build a NATConfig from environment variables, for the apps/servers:
+//   VC_STUN       host[:port]   (default stun.l.google.com:19302; "off" disables)
+//   VC_TURN       host[:port]   (optional; enables relay)
+//   VC_TURN_USER / VC_TURN_PASS credentials for VC_TURN
+// Lets the same binary run LAN-only, STUN, or full STUN+TURN without a rebuild.
+[[nodiscard]] NATConfig iceConfigFromEnv();
 
 // Callbacks from libjuice's internal thread. Any may be left unset.
 struct NATCallbacks {
@@ -127,6 +148,9 @@ private:
     // libjuice copies the stun host string only by pointer in some builds; keep
     // the backing storage alive for the agent's lifetime.
     std::string stunHostStorage_;
+    // Backing array of juice_turn_server_t whose char* fields point into
+    // cfg_.turnServers; must outlive the agent.
+    std::vector<juice_turn_server> turnStorage_;
     std::atomic<IceState> state_{IceState::Disconnected};
 };
 

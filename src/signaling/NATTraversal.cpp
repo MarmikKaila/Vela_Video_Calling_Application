@@ -1,5 +1,6 @@
 #include "NATTraversal.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -96,6 +97,23 @@ Status NATTraversal::initialize(const NATConfig& cfg, NATCallbacks cbs) {
         jc.stun_server_host = stunHostStorage_.c_str();
         jc.stun_server_port = cfg_.stunPort;
     }
+    // TURN relays. cfg_ is our own member copy, so the strings outlive the agent;
+    // turnStorage_ holds the juice structs (pointers into cfg_) for its lifetime.
+    if (!cfg_.turnServers.empty()) {
+        turnStorage_.clear();
+        turnStorage_.reserve(cfg_.turnServers.size());
+        for (const auto& t : cfg_.turnServers) {
+            juice_turn_server_t js;
+            std::memset(&js, 0, sizeof(js));
+            js.host = t.host.c_str();
+            js.username = t.username.c_str();
+            js.password = t.password.c_str();
+            js.port = t.port;
+            turnStorage_.push_back(js);
+        }
+        jc.turn_servers = turnStorage_.data();
+        jc.turn_servers_count = static_cast<int>(turnStorage_.size());
+    }
     jc.cb_state_changed = &cbStateChanged;
     jc.cb_candidate = &cbCandidate;
     jc.cb_gathering_done = &cbGatheringDone;
@@ -157,6 +175,37 @@ Status NATTraversal::send(const std::uint8_t* data, std::size_t len) {
         return fail(Error::NetworkError);
     }
     return ok();
+}
+
+NATConfig iceConfigFromEnv() {
+    NATConfig cfg;  // defaults to Google STUN, no TURN
+    auto splitHostPort = [](const std::string& s, std::uint16_t defPort,
+                            std::string& host, std::uint16_t& port) {
+        const auto colon = s.rfind(':');
+        if (colon != std::string::npos) {
+            host = s.substr(0, colon);
+            const int p = std::atoi(s.substr(colon + 1).c_str());
+            port = (p > 0 && p <= 65535) ? static_cast<std::uint16_t>(p) : defPort;
+        } else {
+            host = s;
+            port = defPort;
+        }
+    };
+    if (const char* stun = std::getenv("VC_STUN")) {
+        const std::string s = stun;
+        if (s.empty() || s == "off") cfg.stunHost.clear();  // LAN-only
+        else splitHostPort(s, 19302, cfg.stunHost, cfg.stunPort);
+    }
+    if (const char* turn = std::getenv("VC_TURN")) {
+        if (*turn) {
+            TurnServer ts;
+            splitHostPort(turn, 3478, ts.host, ts.port);
+            if (const char* u = std::getenv("VC_TURN_USER")) ts.username = u;
+            if (const char* p = std::getenv("VC_TURN_PASS")) ts.password = p;
+            cfg.turnServers.push_back(std::move(ts));
+        }
+    }
+    return cfg;
 }
 
 }  // namespace vc::signaling
